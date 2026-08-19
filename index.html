@@ -58,6 +58,11 @@
 </div>
 
 <div id="panel">
+  <input id="chat-question" type="text" placeholder="例: 料金について教えて" value="料金について教えて">
+  <button id="ask">バックエンドに質問する</button>
+</div>
+
+<div id="panel">
   <input id="azure-key" type="text" placeholder="Azure Speechのキー">
   <input id="azure-region" type="text" placeholder="リージョン(例: japaneast)" style="max-width:160px">
   <input id="azure-text" type="text" placeholder="こんにちは、はじめまして" value="こんにちは、はじめまして">
@@ -117,12 +122,11 @@ document.getElementById('speak').addEventListener('click', () => {
   }
 });
 
-document.getElementById('speak-ja').addEventListener('click', () => {
+function speakJapanese(text) {
   const key = document.getElementById('azure-key').value.trim();
   const region = document.getElementById('azure-region').value.trim();
-  const text = document.getElementById('azure-text').value.trim();
   if (!key || !region || !text) {
-    statusEl.textContent = 'キー・リージョン・テキストをすべて入力してください';
+    statusEl.textContent = 'キー・リージョンを入力してください';
     return;
   }
 
@@ -132,13 +136,12 @@ document.getElementById('speak-ja').addEventListener('click', () => {
   speechConfig.speechSynthesisVoiceName = "ja-JP-NanamiNeural";
   speechConfig.speechSynthesisOutputFormat = SpeechSDK.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm;
 
-  // 音声を自動再生させず、データだけ受け取る(TalkingHead側で再生とリップシンクを同時に行うため)
   const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, null);
 
   const words = [], wtimes = [], wdurations = [];
   synthesizer.wordBoundary = (s, e) => {
     words.push(e.text);
-    wtimes.push(e.audioOffset / 10000);       // ticks(100ns単位) → ミリ秒
+    wtimes.push(e.audioOffset / 10000);
     wdurations.push(e.duration / 10000);
   };
 
@@ -166,6 +169,30 @@ document.getElementById('speak-ja').addEventListener('click', () => {
       console.error(error);
     }
   );
+}
+
+document.getElementById('speak-ja').addEventListener('click', () => {
+  const text = document.getElementById('azure-text').value.trim();
+  if (text) speakJapanese(text);
+});
+
+document.getElementById('ask').addEventListener('click', async () => {
+  const question = document.getElementById('chat-question').value.trim();
+  if (!question) return;
+  statusEl.textContent = 'バックエンドに問い合わせ中...';
+  try {
+    const res = await fetch('http://localhost:3001/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question })
+    });
+    const data = await res.json();
+    statusEl.textContent = '回答: ' + data.answer;
+    speakJapanese(data.answer);
+  } catch (err) {
+    statusEl.textContent = 'バックエンド接続エラー: ' + err.message + '(server.jsを起動していますか？)';
+    console.error(err);
+  }
 });
 
 document.getElementById('load-sample').addEventListener('click', async () => {
