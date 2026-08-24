@@ -11,37 +11,46 @@ from rag import (
     delete_document,
     search,
     generate_answer_stream,
+    generate_speech_text,
+)
+
+from speech import (
+    text_to_speech,
+    cleanup_audio_files,
+)
+
+from lipsync import (
+    start_lipsync,
+    LIPSYNC_ENABLED,
 )
 
 
 # ============================================================
-# Streamlit
+# Streamlit設定
 # ============================================================
 
 st.set_page_config(
-    page_title="RAG Assistant",
-    page_icon="🔎",
+    page_title="RAG Avatar Assistant",
+    page_icon="🤖",
     layout="wide",
 )
 
 
 # ============================================================
-# Session
+# Session State
 # ============================================================
 
 if "messages" not in st.session_state:
-
     st.session_state.messages = []
 
-
 if "uploader_key" not in st.session_state:
-
     st.session_state.uploader_key = 0
 
-
 if "pending_delete" not in st.session_state:
-
     st.session_state.pending_delete = None
+
+if "speech_enabled" not in st.session_state:
+    st.session_state.speech_enabled = True
 
 
 # ============================================================
@@ -69,15 +78,10 @@ except Exception as e:
 # 削除処理
 # ============================================================
 
-if (
-    st.session_state
-    .pending_delete
-    is not None
-):
+if st.session_state.pending_delete is not None:
 
     document_id = (
-        st.session_state
-        .pending_delete
+        st.session_state.pending_delete
     )
 
     try:
@@ -86,6 +90,7 @@ if (
             document_id
         )
 
+        # 過去回答に削除済み文書の参照が残らないようにする
         st.session_state.messages = []
 
         st.session_state.delete_success = (
@@ -106,16 +111,15 @@ if (
 
 
 # ============================================================
-# Title
+# タイトル
 # ============================================================
 
 st.title(
-    "🔎 RAG Assistant"
+    "🤖 RAG Avatar Assistant"
 )
 
 st.caption(
-    "PostgreSQL + pgvector を利用した"
-    "ドキュメント検索RAG"
+    "PostgreSQL + pgvector + OpenAI + TTS + LipSync"
 )
 
 
@@ -131,7 +135,7 @@ with st.sidebar:
 
 
     # ========================================================
-    # Messages
+    # メッセージ
     # ========================================================
 
     if "upload_success" in st.session_state:
@@ -140,9 +144,7 @@ with st.sidebar:
             st.session_state.upload_success
         )
 
-        del (
-            st.session_state.upload_success
-        )
+        del st.session_state.upload_success
 
 
     if "delete_success" in st.session_state:
@@ -151,9 +153,7 @@ with st.sidebar:
             st.session_state.delete_success
         )
 
-        del (
-            st.session_state.delete_success
-        )
+        del st.session_state.delete_success
 
 
     if "delete_error" in st.session_state:
@@ -162,13 +162,11 @@ with st.sidebar:
             st.session_state.delete_error
         )
 
-        del (
-            st.session_state.delete_error
-        )
+        del st.session_state.delete_error
 
 
     # ========================================================
-    # DB状態
+    # DB接続状態
     # ========================================================
 
     try:
@@ -195,11 +193,45 @@ with st.sidebar:
         )
 
 
+    # ========================================================
+    # 音声 / LipSync
+    # ========================================================
+
+    st.divider()
+
+    st.subheader(
+        "🔊 音声・アバター"
+    )
+
+
+    st.session_state.speech_enabled = (
+        st.toggle(
+            "回答を音声化",
+            value=(
+                st.session_state.speech_enabled
+            ),
+        )
+    )
+
+
+    if LIPSYNC_ENABLED:
+
+        st.caption(
+            "🟢 LipSync 有効"
+        )
+
+    else:
+
+        st.caption(
+            "⚪ LipSync 無効"
+        )
+
+
     st.divider()
 
 
     # ========================================================
-    # Upload
+    # PDFアップロード
     # ========================================================
 
     uploaded_files = (
@@ -218,7 +250,7 @@ with st.sidebar:
 
 
     # ========================================================
-    # Register
+    # PDF登録
     # ========================================================
 
     if uploaded_files:
@@ -253,7 +285,7 @@ with st.sidebar:
 
 
                 # ============================================
-                # Callback
+                # Progress Callback
                 # ============================================
 
                 def update_progress(
@@ -263,7 +295,7 @@ with st.sidebar:
                     message,
                 ):
 
-                    phase_settings = {
+                    settings = {
 
                         "scan": (
                             0,
@@ -307,16 +339,13 @@ with st.sidebar:
                         base,
                         width,
                         phase_name,
-                    ) = (
-                        phase_settings
-                        .get(
-                            phase,
-                            (
-                                0,
-                                0,
-                                "処理中",
-                            ),
-                        )
+                    ) = settings.get(
+                        phase,
+                        (
+                            0,
+                            0,
+                            "処理中",
+                        ),
                     )
 
 
@@ -382,14 +411,18 @@ with st.sidebar:
 
                 try:
 
-                    for file_number, uploaded_file in enumerate(
+                    for (
+                        file_number,
+                        uploaded_file,
+                    ) in enumerate(
                         uploaded_files,
                         start=1,
                     ):
 
                         phase_area.markdown(
                             (
-                                f"### {file_number}"
+                                f"### "
+                                f"{file_number}"
                                 f"/{len(uploaded_files)} "
                                 f"{uploaded_file.name}"
                             )
@@ -451,6 +484,10 @@ with st.sidebar:
                     st.stop()
 
 
+            # ================================================
+            # FileUploaderリセット
+            # ================================================
+
             st.session_state.uploader_key += 1
 
 
@@ -464,10 +501,11 @@ with st.sidebar:
 
 
     # ========================================================
-    # Documents
+    # 登録資料
     # ========================================================
 
     st.divider()
+
 
     documents = (
         get_documents()
@@ -475,8 +513,8 @@ with st.sidebar:
 
 
     total_chunks = sum(
-        doc["chunk_count"]
-        for doc in documents
+        document["chunk_count"]
+        for document in documents
     )
 
 
@@ -503,7 +541,6 @@ with st.sidebar:
 
     st.divider()
 
-
     st.subheader(
         "登録資料"
     )
@@ -517,7 +554,7 @@ with st.sidebar:
 
 
     # ========================================================
-    # Document list
+    # 登録資料一覧
     # ========================================================
 
     for document in documents:
@@ -547,15 +584,15 @@ with st.sidebar:
             with col1:
 
                 st.markdown(
-                    f"**📄 "
-                    f"{document['filename']}**"
+                    (
+                        f"**📄 "
+                        f"{document['filename']}**"
+                    )
                 )
 
 
                 size_mb = (
-                    document[
-                        "file_size"
-                    ]
+                    document["file_size"]
                     / 1024
                     / 1024
                 )
@@ -593,12 +630,10 @@ with st.sidebar:
 
 
 # ============================================================
-# Chat history
+# チャット履歴
 # ============================================================
 
-for message in (
-    st.session_state.messages
-):
+for message in st.session_state.messages:
 
     with st.chat_message(
         message["role"]
@@ -615,9 +650,7 @@ for message in (
                 "📚 参照資料"
             ):
 
-                for source in (
-                    message["sources"]
-                ):
+                for source in message["sources"]:
 
                     st.markdown(
                         f"""
@@ -644,7 +677,7 @@ if not documents:
 
 
 # ============================================================
-# Chat
+# 質問
 # ============================================================
 
 question = (
@@ -685,9 +718,9 @@ if question:
         "assistant"
     ):
 
-        # ----------------------------------------------------
-        # 進捗エリア
-        # ----------------------------------------------------
+        # ====================================================
+        # 状態表示
+        # ====================================================
 
         progress_container = (
             st.container(
@@ -699,14 +732,11 @@ if question:
         with progress_container:
 
             st.markdown(
-                "### 🔄 RAG処理中"
+                "### 🔄 RAG処理"
             )
+
 
             search_line = (
-                st.empty()
-            )
-
-            context_line = (
                 st.empty()
             )
 
@@ -714,73 +744,62 @@ if question:
                 st.empty()
             )
 
+            speech_line = (
+                st.empty()
+            )
 
-            # =================================================
-            # Step 1 検索
-            # =================================================
+            lipsync_line = (
+                st.empty()
+            )
+
+
+        # ====================================================
+        # STEP 1
+        # pgvector検索
+        # ====================================================
+
+        search_line.markdown(
+            "🔎 **pgvectorで関連資料を検索しています...**"
+        )
+
+
+        try:
+
+            results = search(
+                question
+            )
+
+
+        except Exception as e:
 
             search_line.markdown(
-                "🔎 **関連資料を検索しています...**"
+                "❌ **資料検索に失敗しました**"
             )
 
-
-            try:
-
-                results = search(
-                    question
-                )
-
-            except Exception as e:
-
-                search_line.markdown(
-                    "❌ **資料検索に失敗しました**"
-                )
-
-                st.error(
-                    str(e)
-                )
-
-                st.stop()
-
-
-            search_line.markdown(
-                (
-                    "✅ **関連資料を検索しました** "
-                    f"（{len(results)}件）"
-                )
+            st.error(
+                str(e)
             )
 
+            st.stop()
 
-            # =================================================
-            # Step 2 Context
-            # =================================================
 
-            context_line.markdown(
-                "📚 **検索結果を回答用に整理しています...**"
+        search_line.markdown(
+            (
+                "✅ **関連資料を検索しました** "
+                f"（{len(results)}件）"
             )
+        )
 
 
-            # ここは軽い処理なので即時完了
-            context_line.markdown(
-                (
-                    "✅ **回答に使用する資料を準備しました** "
-                    f"（{len(results)} Chunk）"
-                )
-            )
+        # ====================================================
+        # STEP 2
+        # LLM Streaming
+        # ====================================================
 
+        generation_line.markdown(
+            "🤖 **回答を生成しています...**"
+        )
 
-            # =================================================
-            # Step 3 LLM
-            # =================================================
-
-            generation_line.markdown(
-                "🤖 **回答を生成しています...**"
-            )
-
-
-        # ----------------------------------------------------
-        # 回答を表示する場所
-        # ----------------------------------------------------
 
         answer_placeholder = (
             st.empty()
@@ -792,10 +811,6 @@ if question:
 
         try:
 
-            # =================================================
-            # ストリーミング生成
-            # =================================================
-
             for delta in (
                 generate_answer_stream(
                     question,
@@ -803,29 +818,17 @@ if question:
                 )
             ):
 
-                full_answer += (
-                    delta
-                )
+                full_answer += delta
 
-                # カーソル表示
+
+                # ============================================
+                # 回答はリアルタイム表示
+                # ============================================
+
                 answer_placeholder.markdown(
                     full_answer
                     + " ▌"
                 )
-
-
-            # =================================================
-            # 最終表示
-            # =================================================
-
-            answer_placeholder.markdown(
-                full_answer
-            )
-
-
-            generation_line.markdown(
-                "✅ **回答生成完了**"
-            )
 
 
         except Exception as e:
@@ -840,9 +843,141 @@ if question:
 
             st.stop()
 
+        # ====================================================
+        # 回答生成完了
+        # ====================================================
+
+        answer_placeholder.markdown(
+            full_answer
+        )
+
+
+        generation_line.markdown(
+            "✅ **回答生成完了**"
+        )
+
 
         # ====================================================
-        # 出典
+        # STEP 3
+        # 音声用の話し言葉へ変換
+        # ====================================================
+
+        audio_path = None
+        speech_text = ""
+
+
+        if (
+            st.session_state
+            .speech_enabled
+            and full_answer.strip()
+        ):
+
+            speech_line.markdown(
+                "🗣️ **話し言葉に変換しています...**"
+            )
+
+
+            try:
+
+                # ====================================================
+                # 表示用回答
+                #        ↓
+                # アバター発話用の口語へ変換
+                # ====================================================
+
+                speech_text = (
+                    generate_speech_text(
+                        full_answer
+                    )
+                )
+
+
+                speech_line.markdown(
+                    "🔊 **音声を生成しています...**"
+                )
+
+
+                # ====================================================
+                # TTS
+                # ====================================================
+
+                audio_path = (
+                    text_to_speech(
+                        speech_text
+                    )
+                )
+
+
+                speech_line.markdown(
+                    "✅ **音声生成完了**"
+                )
+
+
+                # ====================================================
+                # Browser再生
+                # ====================================================
+
+                st.audio(
+                    str(audio_path),
+                    format="audio/wav",
+                    autoplay=True,
+                )
+
+
+            except Exception as e:
+
+                speech_line.markdown(
+                    "❌ **音声生成に失敗しました**"
+                )
+
+                st.warning(
+                    str(e)
+                )
+
+
+        # ====================================================
+        # STEP 4
+        # LipSync
+        #
+        # ★ ここも1回答につき1回だけ
+        # ====================================================
+
+        if (
+            audio_path is not None
+            and LIPSYNC_ENABLED
+        ):
+
+            lipsync_line.markdown(
+                "👄 **LipSync動画を生成しています...**"
+            )
+
+
+            try:
+
+                start_lipsync(
+                    audio_path,
+                    speech_text,
+                )
+
+
+                lipsync_line.markdown(
+                    "✅ **LipSync処理を開始しました**"
+                )
+
+
+            except Exception as e:
+
+                lipsync_line.markdown(
+                    "❌ **LipSync処理に失敗しました**"
+                )
+
+                st.warning(
+                    str(e)
+                )
+
+
+        # ====================================================
+        # 参照資料
         # ====================================================
 
         with st.expander(
@@ -861,9 +996,9 @@ if question:
 """
                 )
 
-                text = (
-                    result["text"]
-                )
+
+                text = result["text"]
+
 
                 if len(text) > 500:
 
@@ -871,6 +1006,7 @@ if question:
                         text[:500]
                         + "..."
                     )
+
 
                 st.caption(
                     text
@@ -880,7 +1016,7 @@ if question:
 
 
     # ========================================================
-    # History
+    # 履歴保存
     # ========================================================
 
     st.session_state.messages.append(
@@ -890,3 +1026,12 @@ if question:
             "sources": results,
         }
     )
+
+
+# ============================================================
+# 古い音声削除
+# ============================================================
+
+cleanup_audio_files(
+    keep_latest=10
+)
