@@ -1,29 +1,21 @@
-from pathlib import Path
-
 import streamlit as st
 
+from db import (
+    init_database,
+    check_database,
+)
+
 from rag import (
-    sync_documents,
-    search,
-    generate_answer,
+    get_documents,
+    register_document,
     delete_document,
+    search,
+    generate_answer_stream,
 )
 
 
 # ============================================================
-# 設定
-# ============================================================
-
-DOCS_DIR = Path("./docs")
-
-DOCS_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
-)
-
-
-# ============================================================
-# Streamlit設定
+# Streamlit
 # ============================================================
 
 st.set_page_config(
@@ -34,51 +26,76 @@ st.set_page_config(
 
 
 # ============================================================
-# Session State 初期化
+# Session
 # ============================================================
 
-if "uploader_key" not in st.session_state:
-    st.session_state.uploader_key = 0
-
 if "messages" not in st.session_state:
+
     st.session_state.messages = []
 
+
+if "uploader_key" not in st.session_state:
+
+    st.session_state.uploader_key = 0
+
+
 if "pending_delete" not in st.session_state:
+
     st.session_state.pending_delete = None
 
 
 # ============================================================
-# 削除処理
-#
-# 画面を描画する前に実施する。
-# 削除ボタン押下中に直接ファイル削除すると、
-# Streamlitの再描画タイミングで表示崩れが起きやすいため。
+# DB初期化
 # ============================================================
 
-if st.session_state.pending_delete:
+try:
 
-    source = st.session_state.pending_delete
+    init_database()
+
+except Exception as e:
+
+    st.error(
+        "PostgreSQLへ接続できません。"
+    )
+
+    st.code(
+        str(e)
+    )
+
+    st.stop()
+
+
+# ============================================================
+# 削除処理
+# ============================================================
+
+if (
+    st.session_state
+    .pending_delete
+    is not None
+):
+
+    document_id = (
+        st.session_state
+        .pending_delete
+    )
 
     try:
 
-        delete_document(
-            source
+        filename = delete_document(
+            document_id
         )
 
-        # RAGキャッシュを破棄
-        st.cache_resource.clear()
-
-        # 削除済みPDFを参照している過去のチャット履歴もクリア
         st.session_state.messages = []
 
         st.session_state.delete_success = (
-            f"{source} を削除しました。"
+            f"{filename} を削除しました。"
         )
 
     except Exception as e:
 
         st.session_state.delete_error = (
-            f"{source} の削除に失敗しました。\n\n{e}"
+            str(e)
         )
 
     finally:
@@ -89,7 +106,7 @@ if st.session_state.pending_delete:
 
 
 # ============================================================
-# タイトル
+# Title
 # ============================================================
 
 st.title(
@@ -97,37 +114,9 @@ st.title(
 )
 
 st.caption(
-    "PDFを登録して、資料の内容について質問できます。"
+    "PostgreSQL + pgvector を利用した"
+    "ドキュメント検索RAG"
 )
-
-
-# ============================================================
-# RAG初期化
-# ============================================================
-
-@st.cache_resource
-def initialize_rag():
-
-    return sync_documents()
-
-
-try:
-
-    index, chunks = initialize_rag()
-
-except RuntimeError:
-
-    # PDF未登録の場合
-    index = None
-    chunks = []
-
-except Exception as e:
-
-    st.error(
-        f"RAGの初期化に失敗しました。\n\n{e}"
-    )
-
-    st.stop()
 
 
 # ============================================================
@@ -142,7 +131,7 @@ with st.sidebar:
 
 
     # ========================================================
-    # 各種メッセージ
+    # Messages
     # ========================================================
 
     if "upload_success" in st.session_state:
@@ -151,7 +140,9 @@ with st.sidebar:
             st.session_state.upload_success
         )
 
-        del st.session_state.upload_success
+        del (
+            st.session_state.upload_success
+        )
 
 
     if "delete_success" in st.session_state:
@@ -160,7 +151,9 @@ with st.sidebar:
             st.session_state.delete_success
         )
 
-        del st.session_state.delete_success
+        del (
+            st.session_state.delete_success
+        )
 
 
     if "delete_error" in st.session_state:
@@ -169,97 +162,98 @@ with st.sidebar:
             st.session_state.delete_error
         )
 
-        del st.session_state.delete_error
+        del (
+            st.session_state.delete_error
+        )
 
 
     # ========================================================
-    # PDFアップロード
+    # DB状態
     # ========================================================
 
-    uploaded_files = st.file_uploader(
-        "PDFをアップロード",
-        type=["pdf"],
-        accept_multiple_files=True,
-        key=(
-            "pdf_uploader_"
-            f"{st.session_state.uploader_key}"
-        ),
+    try:
+
+        db_ok = (
+            check_database()
+        )
+
+    except Exception:
+
+        db_ok = False
+
+
+    if db_ok:
+
+        st.caption(
+            "🟢 PostgreSQL 接続中"
+        )
+
+    else:
+
+        st.caption(
+            "🔴 PostgreSQL 接続エラー"
+        )
+
+
+    st.divider()
+
+
+    # ========================================================
+    # Upload
+    # ========================================================
+
+    uploaded_files = (
+        st.file_uploader(
+            "PDFをアップロード",
+            type=[
+                "pdf",
+            ],
+            accept_multiple_files=True,
+            key=(
+                "pdf_uploader_"
+                f"{st.session_state.uploader_key}"
+            ),
+        )
     )
 
 
     # ========================================================
-    # PDF登録
+    # Register
     # ========================================================
 
     if uploaded_files:
 
         if st.button(
             "📥 RAGへ登録",
-            use_container_width=True,
             type="primary",
+            use_container_width=True,
         ):
 
-            saved_files = []
-
-            # ------------------------------------------------
-            # PDF保存
-            # ------------------------------------------------
-
-            try:
-
-                for uploaded_file in uploaded_files:
-
-                    safe_name = Path(
-                        uploaded_file.name
-                    ).name
-
-                    file_path = (
-                        DOCS_DIR
-                        / safe_name
-                    )
-
-                    with open(
-                        file_path,
-                        "wb",
-                    ) as f:
-
-                        f.write(
-                            uploaded_file.getbuffer()
-                        )
-
-                    saved_files.append(
-                        safe_name
-                    )
-
-            except Exception as e:
-
-                st.error(
-                    f"PDFの保存に失敗しました。\n\n{e}"
-                )
-
-                st.stop()
-
-
-            # ------------------------------------------------
-            # RAG登録処理
-            # ------------------------------------------------
-
             with st.status(
-                "PDFをRAGへ登録しています...",
+                "PDFを登録しています...",
                 expanded=True,
             ) as status:
 
-                progress_bar = st.progress(
-                    0,
-                    text="処理を開始しています...",
+                progress_bar = (
+                    st.progress(
+                        0,
+                        text=(
+                            "処理を開始しています..."
+                        ),
+                    )
                 )
 
-                phase_text = st.empty()
-                detail_text = st.empty()
+                phase_area = (
+                    st.empty()
+                )
+
+                detail_area = (
+                    st.empty()
+                )
 
 
                 # ============================================
-                # Progress Callback
+                # Callback
                 # ============================================
 
                 def update_progress(
@@ -269,47 +263,61 @@ with st.sidebar:
                     message,
                 ):
 
-                    if phase == "scan":
+                    phase_settings = {
 
-                        base = 0
-                        width = 5
-                        phase_name = "① PDF確認"
+                        "scan": (
+                            0,
+                            5,
+                            "① ファイル確認"
+                        ),
 
-                    elif phase == "pdf":
+                        "pdf": (
+                            5,
+                            20,
+                            "② PDF解析"
+                        ),
 
-                        base = 5
-                        width = 20
-                        phase_name = "② PDF解析"
+                        "chunk": (
+                            25,
+                            10,
+                            "③ Chunk作成"
+                        ),
 
-                    elif phase == "chunk":
+                        "embedding": (
+                            35,
+                            50,
+                            "④ Embedding生成"
+                        ),
 
-                        base = 25
-                        width = 10
-                        phase_name = "③ Chunk作成"
+                        "database": (
+                            85,
+                            14,
+                            "⑤ DB保存"
+                        ),
 
-                    elif phase == "embedding":
+                        "complete": (
+                            100,
+                            0,
+                            "⑥ 完了"
+                        ),
+                    }
 
-                        base = 35
-                        width = 55
-                        phase_name = "④ Embedding生成"
 
-                    elif phase == "index":
-
-                        base = 90
-                        width = 9
-                        phase_name = "⑤ 検索Index更新"
-
-                    elif phase == "complete":
-
-                        base = 100
-                        width = 0
-                        phase_name = "⑥ 完了"
-
-                    else:
-
-                        base = 0
-                        width = 0
-                        phase_name = "処理中"
+                    (
+                        base,
+                        width,
+                        phase_name,
+                    ) = (
+                        phase_settings
+                        .get(
+                            phase,
+                            (
+                                0,
+                                0,
+                                "処理中",
+                            ),
+                        )
+                    )
 
 
                     if (
@@ -344,79 +352,93 @@ with st.sidebar:
 
                         percent = int(
                             base
-                            + (
-                                width
-                                * ratio
-                            )
+                            + width
+                            * ratio
                         )
-
-
-                    percent = max(
-                        0,
-                        min(
-                            percent,
-                            100,
-                        ),
-                    )
 
 
                     progress_bar.progress(
                         percent,
                         text=(
-                            f"{percent}% - {message}"
+                            f"{percent}% - "
+                            f"{message}"
                         ),
                     )
 
-                    phase_text.markdown(
+
+                    phase_area.markdown(
                         f"**{phase_name}**"
                     )
 
-                    detail_text.caption(
+
+                    detail_area.caption(
                         message
                     )
 
 
                 # ============================================
-                # RAG更新
+                # 登録処理
                 # ============================================
 
                 try:
 
-                    st.cache_resource.clear()
+                    for file_number, uploaded_file in enumerate(
+                        uploaded_files,
+                        start=1,
+                    ):
 
-                    index, chunks = sync_documents(
-                        progress_callback=update_progress
-                    )
+                        phase_area.markdown(
+                            (
+                                f"### {file_number}"
+                                f"/{len(uploaded_files)} "
+                                f"{uploaded_file.name}"
+                            )
+                        )
+
+
+                        register_document(
+                            filename=(
+                                uploaded_file.name
+                            ),
+
+                            file_bytes=(
+                                uploaded_file
+                                .getvalue()
+                            ),
+
+                            mime_type=(
+                                uploaded_file.type
+                                or "application/pdf"
+                            ),
+
+                            progress_callback=(
+                                update_progress
+                            ),
+                        )
+
 
                     progress_bar.progress(
                         100,
-                        text="100% - 登録完了",
+                        text=(
+                            "100% - 登録完了"
+                        ),
                     )
 
-                    phase_text.markdown(
-                        "**⑥ 完了**"
-                    )
-
-                    detail_text.caption(
-                        (
-                            f"{len(saved_files)}件のPDFを"
-                            "RAGへ登録しました。"
-                        )
-                    )
 
                     status.update(
                         label=(
-                            "PDFのRAG登録が完了しました。"
+                            "PDF登録が完了しました。"
                         ),
                         state="complete",
                         expanded=False,
                     )
 
+
                 except Exception as e:
 
                     status.update(
                         label=(
-                            "PDFのRAG登録に失敗しました。"
+                            "PDF登録に失敗しました。"
                         ),
                         state="error",
                         expanded=True,
@@ -429,117 +451,154 @@ with st.sidebar:
                     st.stop()
 
 
-            # ------------------------------------------------
-            # FileUploaderリセット
-            # ------------------------------------------------
-
             st.session_state.uploader_key += 1
 
+
             st.session_state.upload_success = (
-                f"{len(saved_files)}件のPDFを登録しました。"
+                f"{len(uploaded_files)}件の"
+                "処理が完了しました。"
             )
+
 
             st.rerun()
 
 
     # ========================================================
-    # RAG情報
+    # Documents
     # ========================================================
 
     st.divider()
 
-    st.subheader(
-        "RAG情報"
+    documents = (
+        get_documents()
     )
 
 
-    # 実ファイルを正として表示する
-    source_files = sorted(
-        pdf.name
-        for pdf in DOCS_DIR.glob("*.pdf")
+    total_chunks = sum(
+        doc["chunk_count"]
+        for doc in documents
     )
 
 
-    st.metric(
-        "登録PDF数",
-        len(source_files),
-    )
-
-    st.metric(
-        "登録Chunk数",
-        len(chunks),
+    col1, col2 = st.columns(
+        2
     )
 
 
-    # ========================================================
-    # 登録資料
-    # ========================================================
+    with col1:
+
+        st.metric(
+            "登録PDF数",
+            len(documents),
+        )
+
+
+    with col2:
+
+        st.metric(
+            "Chunk数",
+            total_chunks,
+        )
+
 
     st.divider()
+
 
     st.subheader(
         "登録資料"
     )
 
 
-    if source_files:
+    if not documents:
 
-        for source in source_files:
+        st.caption(
+            "資料が登録されていません。"
+        )
 
-            col1, col2 = st.columns(
-                [5, 1],
-                vertical_alignment="center",
+
+    # ========================================================
+    # Document list
+    # ========================================================
+
+    for document in documents:
+
+        container = (
+            st.container(
+                border=True
             )
+        )
+
+
+        with container:
+
+            col1, col2 = (
+                st.columns(
+                    [
+                        5,
+                        1,
+                    ],
+                    vertical_alignment=(
+                        "center"
+                    ),
+                )
+            )
+
 
             with col1:
 
-                st.write(
-                    f"📄 {source}"
+                st.markdown(
+                    f"**📄 "
+                    f"{document['filename']}**"
                 )
+
+
+                size_mb = (
+                    document[
+                        "file_size"
+                    ]
+                    / 1024
+                    / 1024
+                )
+
+
+                st.caption(
+                    (
+                        f"{size_mb:.2f} MB"
+                        f" / "
+                        f"{document['chunk_count']} Chunk"
+                    )
+                )
+
 
             with col2:
 
                 if st.button(
                     "🗑️",
-                    key=f"delete_{source}",
-                    help=f"{source} を削除",
+                    key=(
+                        "delete_"
+                        f"{document['id']}"
+                    ),
+                    help=(
+                        f"{document['filename']}"
+                        " を削除"
+                    ),
                     use_container_width=True,
                 ):
 
-                    # ここでは削除しない
-                    # 次回rerun冒頭で削除する
-                    st.session_state.pending_delete = source
+                    st.session_state.pending_delete = (
+                        document["id"]
+                    )
 
                     st.rerun()
 
-    else:
-
-        st.caption(
-            "PDFが登録されていません。"
-        )
-
-
-    # ========================================================
-    # 手動再読み込み
-    # ========================================================
-
-    st.divider()
-
-    if st.button(
-        "🔄 RAGを再読み込み",
-        use_container_width=True,
-    ):
-
-        st.cache_resource.clear()
-
-        st.rerun()
-
 
 # ============================================================
-# チャット履歴表示
+# Chat history
 # ============================================================
 
-for message in st.session_state.messages:
+for message in (
+    st.session_state.messages
+):
 
     with st.chat_message(
         message["role"]
@@ -549,43 +608,49 @@ for message in st.session_state.messages:
             message["content"]
         )
 
+
         if "sources" in message:
 
             with st.expander(
                 "📚 参照資料"
             ):
 
-                for source in message["sources"]:
+                for source in (
+                    message["sources"]
+                ):
 
                     st.markdown(
                         f"""
 **📄 {source["source"]}**
 
-- Page: {source["page"]}
-- 類似度: `{source["score"]:.4f}`
+Page: {source["page"]}
+
+類似度: `{source["score"]:.4f}`
 """
                     )
 
 
 # ============================================================
-# PDF未登録
+# 文書なし
 # ============================================================
 
-if index is None:
+if not documents:
 
     st.info(
-        "左側のメニューからPDFをアップロードしてください。"
+        "左側からPDFを登録してください。"
     )
 
     st.stop()
 
 
 # ============================================================
-# 質問入力
+# Chat
 # ============================================================
 
-question = st.chat_input(
-    "資料について質問してください"
+question = (
+    st.chat_input(
+        "資料について質問してください"
+    )
 )
 
 
@@ -601,6 +666,7 @@ if question:
             "content": question,
         }
     )
+
 
     with st.chat_message(
         "user"
@@ -619,68 +685,55 @@ if question:
         "assistant"
     ):
 
-        with st.status(
-            "回答を作成しています...",
-            expanded=True,
-        ) as answer_status:
+        # ----------------------------------------------------
+        # 進捗エリア
+        # ----------------------------------------------------
 
-            search_status = st.empty()
-
-            search_status.write(
-                "🔎 関連する資料を検索しています..."
+        progress_container = (
+            st.container(
+                border=True
             )
+        )
+
+
+        with progress_container:
+
+            st.markdown(
+                "### 🔄 RAG処理中"
+            )
+
+            search_line = (
+                st.empty()
+            )
+
+            context_line = (
+                st.empty()
+            )
+
+            generation_line = (
+                st.empty()
+            )
+
+
+            # =================================================
+            # Step 1 検索
+            # =================================================
+
+            search_line.markdown(
+                "🔎 **関連資料を検索しています...**"
+            )
+
 
             try:
 
-                # -------------------------------------------
-                # Vector検索
-                # -------------------------------------------
-
                 results = search(
-                    question,
-                    index,
-                    chunks,
-                )
-
-                search_status.write(
-                    (
-                        f"✅ 関連資料を"
-                        f"{len(results)}件取得しました。"
-                    )
-                )
-
-                llm_status = st.empty()
-
-                llm_status.write(
-                    "🤖 回答を生成しています..."
-                )
-
-
-                # -------------------------------------------
-                # LLM
-                # -------------------------------------------
-
-                answer = generate_answer(
-                    question,
-                    results,
-                )
-
-                llm_status.write(
-                    "✅ 回答生成完了"
-                )
-
-                answer_status.update(
-                    label="回答を生成しました。",
-                    state="complete",
-                    expanded=False,
+                    question
                 )
 
             except Exception as e:
 
-                answer_status.update(
-                    label="回答生成に失敗しました。",
-                    state="error",
-                    expanded=True,
+                search_line.markdown(
+                    "❌ **資料検索に失敗しました**"
                 )
 
                 st.error(
@@ -690,13 +743,102 @@ if question:
                 st.stop()
 
 
-        # ====================================================
-        # 回答表示
-        # ====================================================
+            search_line.markdown(
+                (
+                    "✅ **関連資料を検索しました** "
+                    f"（{len(results)}件）"
+                )
+            )
 
-        st.markdown(
-            answer
+
+            # =================================================
+            # Step 2 Context
+            # =================================================
+
+            context_line.markdown(
+                "📚 **検索結果を回答用に整理しています...**"
+            )
+
+
+            # ここは軽い処理なので即時完了
+            context_line.markdown(
+                (
+                    "✅ **回答に使用する資料を準備しました** "
+                    f"（{len(results)} Chunk）"
+                )
+            )
+
+
+            # =================================================
+            # Step 3 LLM
+            # =================================================
+
+            generation_line.markdown(
+                "🤖 **回答を生成しています...**"
+            )
+
+
+        # ----------------------------------------------------
+        # 回答を表示する場所
+        # ----------------------------------------------------
+
+        answer_placeholder = (
+            st.empty()
         )
+
+
+        full_answer = ""
+
+
+        try:
+
+            # =================================================
+            # ストリーミング生成
+            # =================================================
+
+            for delta in (
+                generate_answer_stream(
+                    question,
+                    results,
+                )
+            ):
+
+                full_answer += (
+                    delta
+                )
+
+                # カーソル表示
+                answer_placeholder.markdown(
+                    full_answer
+                    + " ▌"
+                )
+
+
+            # =================================================
+            # 最終表示
+            # =================================================
+
+            answer_placeholder.markdown(
+                full_answer
+            )
+
+
+            generation_line.markdown(
+                "✅ **回答生成完了**"
+            )
+
+
+        except Exception as e:
+
+            generation_line.markdown(
+                "❌ **回答生成に失敗しました**"
+            )
+
+            st.error(
+                str(e)
+            )
+
+            st.stop()
 
 
         # ====================================================
@@ -713,12 +855,15 @@ if question:
                     f"""
 ### 📄 {result["source"]}
 
-**Page:** {result["page"]}  
+**Page:** {result["page"]}
+
 **類似度:** `{result["score"]:.4f}`
 """
                 )
 
-                text = result["text"]
+                text = (
+                    result["text"]
+                )
 
                 if len(text) > 500:
 
@@ -735,13 +880,13 @@ if question:
 
 
     # ========================================================
-    # 履歴保存
+    # History
     # ========================================================
 
     st.session_state.messages.append(
         {
             "role": "assistant",
-            "content": answer,
+            "content": full_answer,
             "sources": results,
         }
     )
