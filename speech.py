@@ -1,7 +1,15 @@
 from pathlib import Path
 from uuid import uuid4
 
+from dotenv import load_dotenv
 from openai import OpenAI
+
+
+# ============================================================
+# Environment
+# ============================================================
+
+load_dotenv()
 
 
 # ============================================================
@@ -12,7 +20,17 @@ TTS_MODEL = "gpt-4o-mini-tts"
 
 TTS_VOICE = "alloy"
 
-AUDIO_DIR = Path("./audio")
+
+BASE_DIR = Path(
+    __file__
+).resolve().parent
+
+
+AUDIO_DIR = (
+    BASE_DIR
+    / "audio"
+)
+
 
 AUDIO_DIR.mkdir(
     parents=True,
@@ -33,34 +51,30 @@ client = OpenAI()
 
 def text_to_speech(
     text: str,
-) -> Path:
+):
 
-    text = text.strip()
+    text = (
+        text.strip()
+    )
+
 
     if not text:
 
         raise ValueError(
-            "TTS対象のテキストが空です。"
+            "TTS対象テキストが空です。"
         )
 
-
-    # ========================================================
-    # ファイル名
-    # ========================================================
 
     filename = (
         f"speech_{uuid4().hex}.wav"
     )
+
 
     output_path = (
         AUDIO_DIR
         / filename
     )
 
-
-    # ========================================================
-    # 音声生成
-    # ========================================================
 
     with (
         client.audio.speech
@@ -71,8 +85,9 @@ def text_to_speech(
             input=text,
             response_format="wav",
             instructions=(
-                "自然で落ち着いた日本語で、"
-                "聞き取りやすく話してください。"
+                "自然な日本語の会話として話してください。"
+                "営業担当者にアドバイスするような、"
+                "落ち着いて聞き取りやすい口調にしてください。"
             ),
         )
     ) as response:
@@ -90,7 +105,7 @@ def text_to_speech(
 # ============================================================
 
 def cleanup_audio_files(
-    keep_latest: int = 20,
+    keep_latest=10,
 ):
 
     files = sorted(
@@ -104,9 +119,11 @@ def cleanup_audio_files(
     )
 
 
-    for file_path in files[
-        keep_latest:
-    ]:
+    for file_path in (
+        files[
+            keep_latest:
+        ]
+    ):
 
         try:
 

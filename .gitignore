@@ -1,50 +1,40 @@
-# Python virtual environment
+# Python
 .venv/
 venv/
 env/
 
-# Python cache
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 
-# Environment variables / secrets
+# Secrets
 .env
 .env.*
 !.env.example
 
+# Generated audio
+audio/
+
 # Streamlit
 .streamlit/secrets.toml
 
-# RAG generated data
-storage/
+# IDE
+.vscode/
+.idea/
 
-# Uploaded documents
-docs/
+# Windows / macOS
+Thumbs.db
+desktop.ini
+.DS_Store
 
 # Logs
 *.log
 logs/
 
-# IDE / editor
-.vscode/
-.idea/
-
-# OS files
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Build / package artifacts
+# Python artifacts
 build/
 dist/
 *.egg-info/
 
-# Test / coverage
 .pytest_cache/
 .coverage
 htmlcov/

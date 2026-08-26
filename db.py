@@ -12,11 +12,9 @@ from pgvector.psycopg import register_vector
 
 load_dotenv()
 
-
 DATABASE_URL = os.getenv(
     "DATABASE_URL"
 )
-
 
 EMBEDDING_DIMENSIONS = 1536
 
@@ -30,10 +28,7 @@ if not DATABASE_URL:
 
 
 # ============================================================
-# 素のDB接続
-#
-# pgvectorがまだ有効化されていない初期化処理でも
-# 使用できる接続
+# Raw Connection
 # ============================================================
 
 def get_raw_connection():
@@ -44,9 +39,7 @@ def get_raw_connection():
 
 
 # ============================================================
-# 通常のDB接続
-#
-# vector拡張が有効化された後はこちらを使用
+# Normal Connection
 # ============================================================
 
 def get_connection():
@@ -74,7 +67,7 @@ def get_connection():
 def init_database():
 
     # --------------------------------------------------------
-    # 最初はregister_vector()しない接続を使用
+    # pgvector
     # --------------------------------------------------------
 
     conn = get_raw_connection()
@@ -82,10 +75,6 @@ def init_database():
     try:
 
         with conn.cursor() as cur:
-
-            # ================================================
-            # pgvector有効化
-            # ================================================
 
             cur.execute(
                 """
@@ -101,7 +90,7 @@ def init_database():
 
 
     # --------------------------------------------------------
-    # vector拡張有効化後なので、ここから通常接続
+    # Table
     # --------------------------------------------------------
 
     conn = get_connection()
@@ -110,9 +99,9 @@ def init_database():
 
         with conn.cursor() as cur:
 
-            # ================================================
+            # =================================================
             # documents
-            # ================================================
+            # =================================================
 
             cur.execute(
                 """
@@ -120,7 +109,7 @@ def init_database():
 
                     id BIGSERIAL PRIMARY KEY,
 
-                    filename TEXT NOT NULL UNIQUE,
+                    filename TEXT NOT NULL,
 
                     file_hash TEXT NOT NULL,
 
@@ -130,8 +119,21 @@ def init_database():
 
                     file_data BYTEA NOT NULL,
 
+                    version INTEGER NOT NULL
+                        DEFAULT 1,
+
+                    document_type TEXT NOT NULL
+                        DEFAULT 'general',
+
                     status TEXT NOT NULL
-                        DEFAULT 'ready',
+                        DEFAULT 'published',
+
+                    is_latest BOOLEAN NOT NULL
+                        DEFAULT TRUE,
+
+                    valid_from DATE,
+
+                    valid_to DATE,
 
                     created_at TIMESTAMPTZ NOT NULL
                         DEFAULT NOW(),
@@ -144,9 +146,66 @@ def init_database():
             )
 
 
-            # ================================================
+            # =================================================
+            # 既存DB移行
+            # =================================================
+
+            cur.execute(
+                """
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS version INTEGER
+                NOT NULL DEFAULT 1
+                """
+            )
+
+            cur.execute(
+                """
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS document_type TEXT
+                NOT NULL DEFAULT 'general'
+                """
+            )
+
+            cur.execute(
+                """
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS is_latest BOOLEAN
+                NOT NULL DEFAULT TRUE
+                """
+            )
+
+            cur.execute(
+                """
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS valid_from DATE
+                """
+            )
+
+            cur.execute(
+                """
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS valid_to DATE
+                """
+            )
+
+
+            # -------------------------------------------------
+            # 旧 UNIQUE(filename) を解除
+            #
+            # 同一ファイル名で複数Versionを保持するため
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                ALTER TABLE documents
+                DROP CONSTRAINT IF EXISTS documents_filename_key
+                """
+            )
+
+
+            # =================================================
             # document_chunks
-            # ================================================
+            # =================================================
 
             cur.execute(
                 f"""
@@ -184,9 +243,9 @@ def init_database():
             )
 
 
-            # ================================================
-            # Chunk重複防止
-            # ================================================
+            # =================================================
+            # Index
+            # =================================================
 
             cur.execute(
                 """
@@ -202,10 +261,6 @@ def init_database():
             )
 
 
-            # ================================================
-            # document_id検索用
-            # ================================================
-
             cur.execute(
                 """
                 CREATE INDEX IF NOT EXISTS
@@ -218,9 +273,34 @@ def init_database():
             )
 
 
-            # ================================================
-            # ベクトル検索用HNSW
-            # ================================================
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_documents_search_filter
+
+                ON documents (
+                    status,
+                    is_latest,
+                    document_type,
+                    valid_from,
+                    valid_to
+                )
+                """
+            )
+
+
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_documents_filename_version
+
+                ON documents (
+                    filename,
+                    version DESC
+                )
+                """
+            )
+
 
             cur.execute(
                 """
@@ -235,7 +315,6 @@ def init_database():
                 """
             )
 
-
         conn.commit()
 
     finally:
@@ -244,7 +323,7 @@ def init_database():
 
 
 # ============================================================
-# DBヘルスチェック
+# DB Health
 # ============================================================
 
 def check_database():
@@ -259,99 +338,12 @@ def check_database():
                 "SELECT 1"
             )
 
-            result = (
-                cur.fetchone()
-            )
+            result = cur.fetchone()
 
             return (
                 result is not None
                 and result[0] == 1
             )
-
-    finally:
-
-        conn.close()
-
-
-# ============================================================
-# pgvector確認
-# ============================================================
-
-def check_vector_extension():
-
-    conn = get_raw_connection()
-
-    try:
-
-        with conn.cursor() as cur:
-
-            cur.execute(
-                """
-                SELECT EXISTS (
-
-                    SELECT 1
-
-                    FROM pg_extension
-
-                    WHERE extname = 'vector'
-
-                )
-                """
-            )
-
-            result = (
-                cur.fetchone()
-            )
-
-            return (
-                result is not None
-                and result[0] is True
-            )
-
-    finally:
-
-        conn.close()
-
-
-# ============================================================
-# テーブル確認
-# ============================================================
-
-def check_tables():
-
-    conn = get_raw_connection()
-
-    try:
-
-        with conn.cursor() as cur:
-
-            cur.execute(
-                """
-                SELECT
-                    table_name
-
-                FROM information_schema.tables
-
-                WHERE
-                    table_schema = 'public'
-                    AND table_name IN (
-                        'documents',
-                        'document_chunks'
-                    )
-
-                ORDER BY
-                    table_name
-                """
-            )
-
-            rows = (
-                cur.fetchall()
-            )
-
-            return [
-                row[0]
-                for row in rows
-            ]
 
     finally:
 
@@ -368,52 +360,15 @@ if __name__ == "__main__":
         "DBを初期化しています..."
     )
 
-    try:
+    init_database()
 
-        init_database()
+    print(
+        "DB初期化完了"
+    )
 
-        print(
-            "DB初期化完了"
-        )
-
-        print()
-
-        print(
-            "pgvector:",
-            (
-                "OK"
-                if check_vector_extension()
-                else "NG"
-            ),
-        )
-
-        tables = check_tables()
-
-        print(
-            "作成済みテーブル:",
-            ", ".join(tables)
-            if tables
-            else "なし",
-        )
-
-        print(
-            "DB接続:",
-            (
-                "OK"
-                if check_database()
-                else "NG"
-            ),
-        )
-
-    except Exception as e:
-
-        print()
-        print(
-            "DB初期化に失敗しました。"
-        )
-
-        print(
-            str(e)
-        )
-
-        raise
+    print(
+        "DB接続:",
+        "OK"
+        if check_database()
+        else "NG",
+    )
