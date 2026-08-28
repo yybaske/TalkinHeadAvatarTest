@@ -1,42 +1,22 @@
 # Python
-.venv/
-venv/
-env/
-
 __pycache__/
 *.py[cod]
+*.pyd
 
-# Secrets
+# Virtual environment
+.venv/
+venv/
+
+# Environment variables
 .env
-.env.*
-!.env.example
-
-# Generated audio
-audio/
-
-# Streamlit
-.streamlit/secrets.toml
 
 # IDE
 .vscode/
 .idea/
 
-# Windows / macOS
-Thumbs.db
-desktop.ini
+# OS
 .DS_Store
+Thumbs.db
 
 # Logs
 *.log
-logs/
-
-# Python artifacts
-build/
-dist/
-*.egg-info/
-
-.pytest_cache/
-.coverage
-htmlcov/
-
-Wav2Lip/
