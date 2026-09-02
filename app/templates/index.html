@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>LipThink RAG</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+</head>
+
+<body>
+
+<div class="app-container">
+
+    <!-- ========================================
+         Sidebar
+    ========================================= -->
+
+    <aside class="sidebar">
+
+        <div class="sidebar-header">
+
+            <div class="logo">
+                LipThink
+            </div>
+
+            <button
+                id="new-chat-button"
+                class="new-chat-button"
+            >
+                ＋ 新しいチャット
+            </button>
+
+            <button
+                id="document-management-button"
+                class="document-management-button"
+            >
+                📄 文書管理
+            </button>
+
+            <button
+                id="feature-management-button"
+                class="feature-management-button"
+            >
+                ⚙ 機能設定
+            </button>
+
+        </div>
+
+        <div class="conversation-title">
+            履歴
+        </div>
+
+        <div
+            id="conversation-list"
+            class="conversation-list"
+        ></div>
+
+    </aside>
+
+
+    <!-- ========================================
+         Main
+    ========================================= -->
+
+    <main class="main">
+
+
+        <!-- ====================================
+             Chat View
+        ===================================== -->
+
+        <div
+            id="chat-view"
+            class="view"
+        >
+
+            <header class="header chat-header">
+
+                <div class="header-title-area">
+
+                    <h1>
+                        RAG Assistant
+                    </h1>
+
+                    <p>
+                        登録済みの文書や有効な連携先を使って回答します
+                    </p>
+
+                </div>
+
+
+                <!-- 会話単位のFeature -->
+                <div
+                    id="conversation-feature-panel"
+                    class="conversation-feature-panel"
+                >
+
+                    <div class="conversation-feature-panel-header">
+
+                        <span class="conversation-feature-panel-title">
+                            このチャットで使う機能
+                        </span>
+
+                    </div>
+
+                    <div
+                        id="conversation-feature-list"
+                        class="conversation-feature-list"
+                    ></div>
+
+                    <div
+                        id="conversation-feature-status"
+                        class="conversation-feature-status"
+                    ></div>
+
+                </div>
+
+            </header>
+
+
+            <section
+                id="chat-area"
+                class="chat-area"
+            >
+
+                <div
+                    id="welcome"
+                    class="welcome"
+                >
+
+                    <h2>
+                        何を調べますか？
+                    </h2>
+
+                    <p>
+                        登録済みの資料について質問してください。
+                    </p>
+
+                    <div class="examples">
+
+                        <button
+                            class="example-button"
+                            data-question="ServiceNow CSMについて教えて"
+                        >
+                            ServiceNow CSMについて教えて
+                        </button>
+
+                        <button
+                            class="example-button"
+                            data-question="CSMのメリットを教えて"
+                        >
+                            CSMのメリットを教えて
+                        </button>
+
+                        <button
+                            class="example-button"
+                            data-question="ケースはどのように作成できますか？"
+                        >
+                            ケースの作成方法
+                        </button>
+
+                    </div>
+
+                </div>
+
+
+                <div
+                    id="messages"
+                    class="messages"
+                ></div>
+
+            </section>
+
+
+            <footer class="input-area">
+
+                <div class="input-wrapper">
+
+                    <textarea
+                        id="message-input"
+                        placeholder="メッセージを入力してください"
+                        rows="1"
+                    ></textarea>
+
+                    <button
+                        id="send-button"
+                        class="send-button"
+                    >
+                        送信
+                    </button>
+
+                </div>
+
+                <div class="input-note">
+                    登録済み資料に根拠がない場合は回答を控えます。
+                </div>
+
+            </footer>
+
+        </div>
+
+
+        <!-- ====================================
+             Document View
+        ===================================== -->
+
+        <div
+            id="document-view"
+            class="view hidden"
+        >
+
+            <header class="header">
+
+                <div>
+
+                    <h1>
+                        文書管理
+                    </h1>
+
+                    <p>
+                        RAG検索で利用する文書を管理します
+                    </p>
+
+                </div>
+
+                <button
+                    id="back-to-chat-button"
+                    class="back-button"
+                >
+                    ← チャットに戻る
+                </button>
+
+            </header>
+
+
+            <section class="document-area">
+
+
+                <!-- 文書登録 -->
+                <div class="document-card">
+
+                    <h2>
+                        文書を登録
+                    </h2>
+
+                    <p class="document-description">
+                        PDF、DOCX、TXT、Markdownファイルを登録できます。
+                    </p>
+
+                    <div
+                        id="upload-drop-zone"
+                        class="upload-drop-zone"
+                    >
+
+                        <input
+                            id="document-file-input"
+                            type="file"
+                            accept=".pdf,.docx,.txt,.md"
+                            hidden
+                        >
+
+                        <div class="upload-icon">
+                            ↑
+                        </div>
+
+                        <div class="upload-title">
+                            ファイルを選択
+                        </div>
+
+                        <div class="upload-description">
+                            またはここにドラッグ＆ドロップ
+                        </div>
+
+                    </div>
+
+
+                    <div
+                        id="selected-file"
+                        class="selected-file hidden"
+                    ></div>
+
+
+                    <button
+                        id="upload-button"
+                        class="upload-button"
+                        disabled
+                    >
+                        文書を登録
+                    </button>
+
+
+                    <div
+                        id="upload-status"
+                        class="upload-status"
+                    ></div>
+
+                </div>
+
+
+                <!-- 文書一覧 -->
+                <div class="document-card">
+
+                    <div class="document-list-header">
+
+                        <div>
+
+                            <h2>
+                                登録済み文書
+                            </h2>
+
+                            <p class="document-description">
+                                現在RAG検索で利用されている文書です。
+                            </p>
+
+                        </div>
+
+                        <button
+                            id="refresh-documents-button"
+                            class="refresh-button"
+                        >
+                            更新
+                        </button>
+
+                    </div>
+
+
+                    <div
+                        id="document-list"
+                        class="document-list"
+                    ></div>
+
+                </div>
+
+            </section>
+
+        </div>
+
+
+        <!-- ====================================
+             Feature Management View
+        ===================================== -->
+
+        <div
+            id="feature-view"
+            class="view hidden"
+        >
+
+            <header class="header">
+
+                <div>
+
+                    <h1>
+                        機能設定
+                    </h1>
+
+                    <p>
+                        利用する機能や外部連携をいつでもON・OFFできます
+                    </p>
+
+                </div>
+
+                <button
+                    id="back-to-chat-from-feature-button"
+                    class="back-button"
+                >
+                    ← チャットに戻る
+                </button>
+
+            </header>
+
+
+            <section class="feature-area">
+
+                <div class="feature-notice">
+
+                    <strong>
+                        管理者向け設定
+                    </strong>
+
+                    <span>
+                        ここで無効にした機能は、
+                        チャット側からも利用できなくなります。
+                    </span>
+
+                </div>
+
+
+                <div
+                    id="feature-status"
+                    class="feature-status"
+                ></div>
+
+
+                <div
+                    id="feature-list"
+                    class="feature-list"
+                ></div>
+
+            </section>
+
+        </div>
+
+    </main>
+
+</div>
+
+
+<script src="/static/app.js"></script>
+
+</body>
+</html>
